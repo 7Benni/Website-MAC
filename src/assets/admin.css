@@ -127,3 +127,15 @@ body.adm-busy .adm-albums { opacity: .6; pointer-events: none; }
 .pv-wide { width: 213px; height: 120px; }
 .adm-focus .queue-buttons { align-items: center; }
 .adm-focus .spacer { flex: 1; }
+.adm-albums-meta { display: flex; align-items: center; gap: 16px; }
+.adm-sortbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; margin-bottom: 16px; border: 1px solid var(--fg); background: var(--bg-raised); font-size: 14px; }
+.adm-sortbar .spacer { flex: 1; }
+.is-sorting { touch-action: none; user-select: none; -webkit-user-select: none; }
+.adm-grid.is-sorting .adm-photo, .adm-album-list.is-sorting .adm-album { cursor: grab; }
+.adm-grid.is-sorting .adm-photo img { pointer-events: none; -webkit-user-drag: none; }
+.adm-grid.is-sorting .adm-photo:hover img { outline: 1px solid var(--fg); outline-offset: 2px; }
+.is-sorting .dragging { opacity: .45; cursor: grabbing; }
+.adm-album-list.is-sorting .adm-album summary { cursor: grab; }
+.adm-album-list.is-sorting .adm-album.dragging { background: var(--bg-raised); }
+.handle { color: var(--muted); font-size: 18px; margin-right: 14px; }
+.adm-pos { position: absolute; top: 6px; left: 6px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; display: grid; place-items: center; background: rgba(0,0,0,.65); color: #fff; font-size: 12px; }

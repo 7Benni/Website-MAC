@@ -22,6 +22,10 @@
   let files = [];      // [{path, sha}] under photos/
   let index = {};      // published thumbnails: { "Album/file.jpg": { thumb } }
   let heroes = [];     // homepage slideshow, from site.json "hero"
+  let siteConf = {};   // site.json as in the repository
+  let confs = new Map(); // album folder -> _album.json
+  const blobCache = new Map(); // blob sha -> parsed JSON
+  let sorting = null;  // folder being reordered, '__albums' for album order, or null
   const heroArr = (h) => [].concat(h || []).filter(Boolean);
   const localPreviews = new Map(); // path -> object URL for photos uploaded this session
   let queue = [];      // [{file, album?, url, progress}]
@@ -127,18 +131,24 @@
     const sha = treeSha || (await gh(`/repos/${cfg.repo}/branches/${encodeURIComponent(cfg.branch)}`)).commit.commit.tree.sha;
     const tree = await gh(`/repos/${cfg.repo}/git/trees/${sha}?recursive=1`);
     files = tree.tree.filter((n) => n.type === 'blob' && n.path.startsWith('photos/')).map((n) => ({ path: n.path, sha: n.sha }));
+    const site = tree.tree.find((n) => n.path === 'site.json');
+    const readBlob = async (blobSha) => {
+      if (!blobCache.has(blobSha)) {
+        const b = await gh(`/repos/${cfg.repo}/git/blobs/${blobSha}`);
+        const text = new TextDecoder().decode(Uint8Array.from(atob(b.content.replace(/\n/g, '')), (c) => c.charCodeAt(0)));
+        let data = {};
+        try { data = JSON.parse(text); } catch { /* invalid JSON */ }
+        blobCache.set(blobSha, data);
+      }
+      return blobCache.get(blobSha);
+    };
+    const albumFiles = files.filter((f) => f.path.split('/').length === 3 && f.path.endsWith('/_album.json'));
+    const [siteData, ...albumData] = await Promise.all([site ? readBlob(site.sha) : {}, ...albumFiles.map((f) => readBlob(f.sha))]);
+    siteConf = siteData;
+    heroes = heroArr(siteConf.hero);
+    confs = new Map(albumFiles.map((f, i) => [f.path.split('/')[1], albumData[i]]));
   }
 
-  async function readRepoFile(path) {
-    try {
-      const f = await gh(`/repos/${cfg.repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(cfg.branch)}`);
-      return new TextDecoder().decode(Uint8Array.from(atob(f.content.replace(/\n/g, '')), (c) => c.charCodeAt(0)));
-    } catch (err) {
-      if (err.status === 404) return null;
-      throw err;
-    }
-  }
-  const readJson = async (path) => { try { return JSON.parse(await readRepoFile(path) || '{}'); } catch { return {}; } };
 
   // ---------- Derived data ----------
   function albums() {
@@ -152,7 +162,18 @@
       if (ACCEPT.test(name)) map.get(folder).photos.push({ ...f, name, src: `${folder}/${name}` });
       if (name === '_album.json') map.get(folder).confSha = f.sha;
     }
-    return [...map.values()].sort((a, b) => a.folder.localeCompare(b.folder));
+    // Same order as the website: custom order first, the rest newest first.
+    const date = (src) => index[src]?.date || '';
+    const albumRank = new Map((Array.isArray(siteConf.albumOrder) ? siteConf.albumOrder : []).map((f, i) => [f, i]));
+    const list = [...map.values()];
+    for (const a of list) {
+      a.conf = confs.get(a.folder) || {};
+      const rank = new Map((Array.isArray(a.conf.photos) ? a.conf.photos : []).map((n, i) => [n, i]));
+      a.photos.sort((x, y) => (rank.get(x.name) ?? 1e9) - (rank.get(y.name) ?? 1e9) || date(y.src).localeCompare(date(x.src)) || x.name.localeCompare(y.name));
+      a.newest = a.photos.map((p) => date(p.src)).sort().pop() || '';
+    }
+    return list.sort((a, b) => (albumRank.get(a.folder) ?? 1e9) - (albumRank.get(b.folder) ?? 1e9)
+      || (a.conf.order ?? 1e9) - (b.conf.order ?? 1e9) || b.newest.localeCompare(a.newest) || a.folder.localeCompare(b.folder));
   }
 
   const cleanName = (s) => s.normalize('NFC').trim().replace(/[\\/]+/g, '-').replace(/^[._]+/, '').replace(/\s+/g, ' ').slice(0, 80);
@@ -411,33 +432,84 @@
     const box = el.querySelector('.adm-albums');
     if (!box) return;
     const list = albums();
-    box.innerHTML = `<div class="adm-albums-head"><h2 class="display">${T('Albums', 'Alben')}</h2><p class="eyebrow">${files.filter((f) => ACCEPT.test(f.path)).length} ${T('photos', 'Fotos')}</p></div>
+    const sortBar = (hint) => `<div class="adm-sortbar"><span>${hint}</span><span class="spacer"></span>
+      <button class="btn btn-small" data-act="sort-cancel">${T('Cancel', 'Abbrechen')}</button>
+      <button class="btn btn-small btn-primary" data-act="sort-save">${T('Save order', 'Reihenfolge speichern')}</button></div>`;
+    const sortingAlbums = sorting === '__albums';
+    box.innerHTML = `<div class="adm-albums-head"><h2 class="display">${T('Albums', 'Alben')}</h2>
+        <span class="adm-albums-meta"><span class="eyebrow">${files.filter((f) => ACCEPT.test(f.path)).length} ${T('photos', 'Fotos')}</span>
+        ${list.length > 1 && !sorting ? `<button class="btn btn-small" data-act="sort-albums">⇅ ${T('Reorder albums', 'Alben sortieren')}</button>` : ''}</span></div>
+      ${sortingAlbums ? sortBar(T('Drag the albums into the order you want.', 'Zieh die Alben in die gewünschte Reihenfolge.')) : ''}
       ${list.length ? '' : `<p class="muted">${T('No albums yet — drop some photos above to start.', 'Noch keine Alben — zieh oben Fotos hinein, um zu starten.')}</p>`}
-      ${list.map((a) => `
-        <details class="adm-album" data-folder="${esc(a.folder)}" ${open.has(a.folder) ? 'open' : ''}>
-          <summary><span class="display">${esc(a.folder)}</span><span class="eyebrow">${a.photos.length} ${T('photos', 'Fotos')}</span></summary>
+      <div class="adm-album-list ${sortingAlbums ? 'is-sorting' : ''}">
+      ${list.map((a) => {
+        const sortingThis = sorting === a.folder;
+        const isOpen = !sortingAlbums && (open.has(a.folder) || sortingThis);
+        return `
+        <details class="adm-album" data-folder="${esc(a.folder)}" ${isOpen ? 'open' : ''}>
+          <summary>${sortingAlbums ? '<span class="handle" aria-hidden="true">⠿</span>' : ''}<span class="display">${esc(a.folder)}</span><span class="eyebrow">${a.photos.length} ${a.photos.length === 1 ? T('photo', 'Foto') : T('photos', 'Fotos')}</span></summary>
+          ${sortingThis ? sortBar(T('Drag the photos into the order you want. The first one opens the album.', 'Zieh die Fotos in die gewünschte Reihenfolge. Das erste eröffnet das Album.')) : `
           <div class="adm-album-actions">
+            ${a.photos.length > 1 && !sorting ? `<button class="btn btn-small" data-act="sort">⇅ ${T('Reorder photos', 'Reihenfolge ändern')}</button>` : ''}
             <button class="btn btn-small" data-act="edit">${T('Edit title & text', 'Titel & Text bearbeiten')}</button>
             <button class="btn btn-small btn-danger" data-act="delete-album">${T('Delete album', 'Album löschen')}</button>
           </div>
-          <div class="adm-edit" hidden></div>
-          <div class="adm-grid">${a.photos.map((p) => `
+          <div class="adm-edit" hidden></div>`}
+          <div class="adm-grid ${sortingThis ? 'is-sorting' : ''}">${a.photos.map((p, i) => `
             <figure class="adm-photo" data-path="${esc(p.path)}" data-src="${esc(p.src)}">
               ${thumb(p)}
+              ${sortingThis ? `<span class="adm-pos">${i + 1}</span>` : ''}
               <figcaption>${esc(p.name)}</figcaption>
-              <div class="adm-photo-actions">
-                <button data-act="cover" title="${esc(L('Use as album cover', 'Als Albumcover verwenden'))}">◩</button>
+              ${sortingThis ? '' : `<div class="adm-photo-actions">
+                <button data-act="cover" class="${a.conf.cover === p.name ? 'on' : ''}" title="${esc(L('Use as album cover', 'Als Albumcover verwenden'))}">◩</button>
                 <button data-act="focus" title="${esc(L('Set focus point (how it is cropped)', 'Fokuspunkt setzen (Bildausschnitt)'))}">◎</button>
                 <button data-act="hero" class="${heroes.includes(p.src) ? 'on' : ''}" title="${esc(L('Show in homepage slideshow', 'In der Startseiten-Diashow zeigen'))}">★</button>
                 <button data-act="delete" title="${esc(L('Delete photo', 'Foto löschen'))}">✕</button>
-              </div>
+              </div>`}
             </figure>`).join('')}</div>
-        </details>`).join('')}`;
+        </details>`;
+      }).join('')}
+      </div>`;
 
     box.querySelectorAll('.adm-album').forEach((d) => {
-      d.addEventListener('toggle', () => d.open ? open.add(d.dataset.folder) : open.delete(d.dataset.folder));
+      d.addEventListener('toggle', () => { if (!sorting) d.open ? open.add(d.dataset.folder) : open.delete(d.dataset.folder); });
     });
+    if (sortingAlbums) {
+      box.querySelectorAll('.adm-album summary').forEach((sm) => sm.addEventListener('click', (e) => e.preventDefault()));
+      sortable(box.querySelector('.adm-album-list'), '.adm-album', 'y');
+    } else if (sorting) {
+      const grid = box.querySelector('.adm-grid.is-sorting');
+      if (grid) sortable(grid, '.adm-photo', 'x', () => grid.querySelectorAll('.adm-pos').forEach((n, i) => { n.textContent = i + 1; }));
+    }
     box.onclick = onAlbumClick;
+  }
+
+  // Drag to reorder (mouse and touch). axis 'x' for grids, 'y' for lists.
+  function sortable(container, selector, axis, onMove = () => {}) {
+    let item = null;
+    container.addEventListener('pointerdown', (e) => {
+      const target = e.target.closest(selector);
+      if (!target || e.button > 0) return;
+      e.preventDefault();
+      item = target;
+      item.classList.add('dragging');
+      container.setPointerCapture(e.pointerId);
+    });
+    container.addEventListener('pointermove', (e) => {
+      if (!item) return;
+      if (e.clientY < 90) scrollBy(0, -14); else if (e.clientY > innerHeight - 90) scrollBy(0, 14);
+      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest(selector);
+      if (!over || over === item || !container.contains(over)) return;
+      const r = over.getBoundingClientRect();
+      const after = axis === 'y'
+        ? e.clientY > r.top + r.height / 2
+        : (e.clientY > r.bottom ? true : e.clientY < r.top ? false : e.clientX > r.left + r.width / 2);
+      container.insertBefore(item, after ? over.nextSibling : over);
+      onMove();
+    });
+    const end = () => { item?.classList.remove('dragging'); item = null; };
+    container.addEventListener('pointerup', end);
+    container.addEventListener('pointercancel', end);
   }
 
   // Focus point: tap the most important spot; crops (hero, album cover) keep it in view.
@@ -445,7 +517,7 @@
     const img = index[src]?.thumb ? BASE + index[src].thumb : localPreviews.get(src);
     if (!img) { status(T('This photo is still being processed — try again in a minute.', 'Dieses Foto wird noch verarbeitet — versuch es in einer Minute nochmal.'), 'warn'); return; }
     const name = src.split('/')[1];
-    const conf = await readJson(`photos/${folder}/_album.json`);
+    const conf = structuredClone(confs.get(folder) || {});
     let [x, y] = conf.focus?.[name] || [50, 50];
     const modal = document.createElement('div');
     modal.className = 'adm-modal';
@@ -484,7 +556,7 @@
     modal.querySelector('[data-f="save"]').onclick = () => {
       close();
       guarded(async () => {
-        const fresh = await readJson(`photos/${folder}/_album.json`);
+        const fresh = structuredClone(confs.get(folder) || {});
         fresh.focus = { ...(fresh.focus || {}), [name]: [x, y] };
         await commit(`Set focus point of ${src}`, [{ path: `photos/${folder}/_album.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(fresh, null, 2)}\n` }]);
       });
@@ -506,7 +578,8 @@
   async function onAlbumClick(e) {
     const btn = e.target.closest('button[data-act]');
     if (!btn) return;
-    const folder = btn.closest('.adm-album').dataset.folder;
+    if (btn.dataset.act === 'sort-albums') { sorting = '__albums'; renderAlbums(); return; }
+    const folder = btn.closest('.adm-album')?.dataset.folder;
     const photo = btn.closest('.adm-photo');
     const act = btn.dataset.act;
 
@@ -516,7 +589,7 @@
     }
     if (act === 'cover' && photo) {
       guarded(async () => {
-        const conf = await readJson(`photos/${folder}/_album.json`);
+        const conf = structuredClone(confs.get(folder) || {});
         conf.cover = photo.dataset.src.split('/')[1];
         await commit(`Set cover of ${folder}`, [{ path: `photos/${folder}/_album.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(conf, null, 2)}\n` }]);
         status(T('Album cover updated.', 'Albumcover aktualisiert.'), 'ok');
@@ -524,7 +597,7 @@
     }
     if (act === 'hero' && photo) {
       guarded(async () => {
-        const site = JSON.parse(await readRepoFile('site.json') || '{}');
+        const site = structuredClone(siteConf);
         const src = photo.dataset.src;
         const list = heroArr(site.hero);
         site.hero = list.includes(src) ? list.filter((x) => x !== src) : [...list, src];
@@ -536,6 +609,28 @@
       });
     }
     if (act === 'focus' && photo) openFocus(folder, photo.dataset.src);
+    if (act === 'sort') { sorting = folder; renderAlbums(); }
+    if (act === 'sort-cancel') { sorting = null; renderAlbums(); }
+    if (act === 'sort-save') {
+      const target = sorting;
+      if (target === '__albums') {
+        const order = [...el.querySelectorAll('.adm-album')].map((d) => d.dataset.folder);
+        sorting = null;
+        guarded(async () => {
+          const site = structuredClone(siteConf);
+          site.albumOrder = order;
+          await commit('Reorder albums', [{ path: 'site.json', mode: '100644', type: 'blob', content: `${JSON.stringify(site, null, 2)}\n` }]);
+        });
+      } else {
+        const names = [...el.querySelectorAll('.adm-grid.is-sorting .adm-photo')].map((f) => f.dataset.src.split('/')[1]);
+        sorting = null;
+        guarded(async () => {
+          const conf = structuredClone(confs.get(target) || {});
+          conf.photos = names;
+          await commit(`Reorder photos in ${target}`, [{ path: `photos/${target}/_album.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(conf, null, 2)}\n` }]);
+        });
+      }
+    }
     if (act === 'delete-album') {
       const a = albums().find((x) => x.folder === folder);
       if (!confirm(L(`Delete the album "${folder}" with all ${a.photos.length} photos? This cannot be undone here.`, `Das Album "${folder}" mit allen ${a.photos.length} Fotos löschen?`))) return;
@@ -547,7 +642,7 @@
       if (!box.hidden) { box.hidden = true; return; }
       box.hidden = false;
       box.innerHTML = `<span class="spin"></span>`;
-      const conf = await readJson(`photos/${folder}/_album.json`);
+      const conf = structuredClone(confs.get(folder) || {});
       const v = (o, k) => esc(o?.[k] || '');
       box.innerHTML = `
         <label class="field"><span class="eyebrow">${T('Folder name', 'Ordnername')}</span><input name="folder" value="${esc(folder)}"></label>
@@ -577,11 +672,12 @@
             entries.push({ path: f.path, mode: '100644', type: 'blob', sha: null });
           }
           if (files.some((x) => x.path === `photos/${folder}/_album.json`)) entries.push({ path: `photos/${folder}/_album.json`, mode: '100644', type: 'blob', sha: null });
-          if (heroes.some((h) => h.startsWith(`${folder}/`))) {
-            const site = JSON.parse(await readRepoFile('site.json') || '{}');
+          const inOrder = Array.isArray(siteConf.albumOrder) && siteConf.albumOrder.includes(folder);
+          if (heroes.some((h) => h.startsWith(`${folder}/`)) || inOrder) {
+            const site = structuredClone(siteConf);
             site.hero = heroArr(site.hero).map((h) => h.startsWith(`${folder}/`) ? h.replace(`${folder}/`, `${newFolder}/`) : h);
+            if (inOrder) site.albumOrder = site.albumOrder.map((f) => f === folder ? newFolder : f);
             entries.push({ path: 'site.json', mode: '100644', type: 'blob', content: `${JSON.stringify(site, null, 2)}\n` });
-            heroes = site.hero;
           }
           for (const [k, v2] of Object.entries(index)) if (k.startsWith(`${folder}/`)) index[k.replace(`${folder}/`, `${newFolder}/`)] = v2;
           open.delete(folder); open.add(newFolder);
@@ -602,13 +698,11 @@
       const [u, repo] = await Promise.all([gh('/user'), gh(`/repos/${cfg.repo}`)]);
       user = u;
       if (!repo.permissions?.push) { signOut('noaccess'); return; }
-      const [, idx, site] = await Promise.all([
+      const [, idx] = await Promise.all([
         loadTree(),
         fetch(`${BASE}/data/photos.json`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
-        readRepoFile('site.json').then((s) => JSON.parse(s || '{}')).catch(() => ({})),
       ]);
       index = idx;
-      heroes = heroArr(site.hero);
       render();
     } catch (err) {
       if (err.status === 404 || err.status === 403) signOut('noaccess');

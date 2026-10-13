@@ -15,6 +15,8 @@ In the admin you can also:
 - **★** add a photo to the homepage slideshow (several photos crossfade; none starred = newest landscape photo)
 - **◎** set a focus point: tap the most important spot, and crops on phones and album covers keep it in view
 - **◩** set the album cover, **✕** delete a photo, and give albums an English and a German title and description
+- **⇅ Reorder photos / Reorder albums**: drag into the order you want (mouse or finger). Photos you add later
+  appear after the sorted ones, newest first. The "Latest" section always stays sorted by date.
 
 **Option B: on your Mac**
 1. Drag photos into `photos/<Album name>/`. A new folder means a new album.

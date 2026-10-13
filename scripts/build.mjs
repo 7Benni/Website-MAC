@@ -189,7 +189,10 @@ async function build() {
   for (const p of valid) p.focus ||= [50, 50];
 
   const albums = albumDefs.map((a) => {
-    const list = valid.filter((p) => p.folder === a.folder).sort(byDate);
+    // Custom order from the admin ("photos": [...] in _album.json); photos not in it follow, newest first.
+    const rank = new Map((Array.isArray(a.conf.photos) ? a.conf.photos : []).map((n, i) => [n, i]));
+    const list = valid.filter((p) => p.folder === a.folder)
+      .sort((x, y) => (rank.get(x.name) ?? 1e9) - (rank.get(y.name) ?? 1e9) || byDate(x, y));
     const cover = list.find((p) => p.name === a.conf.cover) || list.find((p) => /^cover\./i.test(p.name)) || list[0];
     return {
       slug: a.slug,
@@ -199,10 +202,13 @@ async function build() {
       order: a.conf.order,
       photos: list,
       cover,
-      newest: list[0]?.exif.date || '',
+      newest: list.map((p) => p.exif.date || '').sort().pop() || '',
     };
-  }).filter((a) => a.photos.length)
-    .sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9) || b.newest.localeCompare(a.newest) || a.folder.localeCompare(b.folder));
+  }).filter((a) => a.photos.length);
+  // Album order from the admin (site.json "albumOrder"), then pinned "order", then newest first.
+  const albumRank = new Map((Array.isArray(site.albumOrder) ? site.albumOrder : []).map((f, i) => [f, i]));
+  albums.sort((a, b) => (albumRank.get(a.folder) ?? 1e9) - (albumRank.get(b.folder) ?? 1e9)
+    || (a.order ?? 1e9) - (b.order ?? 1e9) || b.newest.localeCompare(a.newest) || a.folder.localeCompare(b.folder));
 
   const albumBySlug = new Map(albums.map((a) => [a.folder, a]));
   for (const p of valid) p.album = p.folder ? albumBySlug.get(p.folder) : null;
@@ -254,7 +260,7 @@ async function build() {
 
   // Data for the admin page
   const index = {};
-  for (const p of valid) index[p.src] = { thumb: `/img/${p.sizes[0].file}`, w: p.w, h: p.h };
+  for (const p of valid) index[p.src] = { thumb: `/img/${p.sizes[0].file}`, w: p.w, h: p.h, date: p.exif.date || '' };
   await write('data/photos.json', JSON.stringify(index));
   await write('version.json', JSON.stringify({ commit: process.env.GITHUB_SHA || null, built: new Date().toISOString() }));
 
