@@ -9,6 +9,7 @@ import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import exifr from 'exifr';
+import { initials, monogramPath, iconSvg } from './monogram.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PHOTOS = path.resolve(process.env.PHOTOS_DIR || path.join(ROOT, 'photos'));
@@ -130,7 +131,7 @@ async function build() {
   const started = Date.now();
   const tpl = await import(`../src/templates.mjs?t=${started}`);
   tpl.setBase(process.env.BASE_PATH);
-  const site = await readJson(path.join(ROOT, 'site.json'), {});
+  const site = await readJson(process.env.SITE_FILE || path.join(ROOT, 'site.json'), {});
   await fs.mkdir(CACHE, { recursive: true });
   await fs.rm(DIST, { recursive: true, force: true });
   await fs.mkdir(path.join(DIST, 'img'), { recursive: true });
@@ -178,6 +179,15 @@ async function build() {
   // Newest first (capture date, then filename)
   const byDate = (a, b) => (b.exif.date || '').localeCompare(a.exif.date || '') || a.name.localeCompare(b.name);
 
+  // Focus points (set in the admin) decide how photos are cropped in the hero and album covers.
+  for (const a of albumDefs) {
+    for (const p of valid.filter((x) => x.folder === a.folder)) {
+      const f = a.conf.focus?.[p.name];
+      p.focus = Array.isArray(f) && f.length === 2 ? f.map((v) => Math.min(100, Math.max(0, Number(v) || 50))) : [50, 50];
+    }
+  }
+  for (const p of valid) p.focus ||= [50, 50];
+
   const albums = albumDefs.map((a) => {
     const list = valid.filter((p) => p.folder === a.folder).sort(byDate);
     const cover = list.find((p) => p.name === a.conf.cover) || list.find((p) => /^cover\./i.test(p.name)) || list[0];
@@ -214,10 +224,15 @@ async function build() {
   }
 
   const latest = [...valid].sort(byDate).slice(0, site.latestCount || 30);
-  const hero = valid.find((p) => p.src === site.hero) || latest.find((p) => p.w > p.h * 1.2) || latest[0];
+  // Hero slideshow: photos starred in the admin (site.json "hero"), else the newest landscape photo.
+  const heroList = [].concat(site.hero || []).map((src) => valid.find((p) => p.src === src)).filter(Boolean).slice(0, 8);
+  const heroes = heroList.length ? heroList : [latest.find((p) => p.w > p.h * 1.2) || latest[0]].filter(Boolean);
+  const hero = heroes[0];
   const aboutPhoto = valid.find((p) => p.src === site.about?.photo) || null;
 
-  const ctx = { site, albums, latest, hero, aboutPhoto, year: new Date().getFullYear() };
+  const mark = monogramPath(initials(site));
+  const siteUrl = (process.env.SITE_URL || site.url || '').replace(/\/+$/, '');
+  const ctx = { site, albums, latest, hero, heroes, aboutPhoto, mark, siteUrl, year: new Date().getFullYear() };
   const write = async (rel, html) => {
     const out = path.join(DIST, rel);
     await fs.mkdir(path.dirname(out), { recursive: true });
@@ -232,6 +247,10 @@ async function build() {
   if (site.imprint?.en || site.imprint?.de) await write('imprint/index.html', tpl.imprint(ctx));
   await write('admin/index.html', tpl.admin(ctx, repoConfig(site)));
   await write('404.html', tpl.notFound(ctx));
+
+  // Logo icons: browser tab (adapts to dark tab bars) and phone home screen
+  await write('icon.svg', iconSvg(mark, { adaptive: true, pad: 0.14 }));
+  await fs.writeFile(path.join(DIST, 'apple-touch-icon.png'), await sharp(Buffer.from(iconSvg(mark, { pad: 0.22 }))).resize(180, 180).png().toBuffer());
 
   // Data for the admin page
   const index = {};

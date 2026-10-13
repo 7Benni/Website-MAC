@@ -71,9 +71,11 @@ button { font: inherit; color: inherit; background: none; border: 0; padding: 0;
   border-bottom: 1px solid var(--line);
   transition: background-color .4s var(--ease), border-color .4s var(--ease), color .4s var(--ease);
 }
-.brand { font-family: var(--serif); font-size: 24px; letter-spacing: .01em; white-space: nowrap; }
+.brand { display: inline-flex; align-items: center; gap: 14px; font-family: var(--serif); font-size: 24px; letter-spacing: .01em; white-space: nowrap; }
+.brand-mark { height: 17px; width: auto; fill: currentColor; flex: none; }
+.brand-name { padding-left: 14px; border-left: 1px solid currentColor; border-left-color: color-mix(in srgb, currentColor 30%, transparent); line-height: 1; }
 .nav { display: flex; align-items: center; gap: clamp(14px, 2.4vw, 32px); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; }
-.nav > a { position: relative; padding: 4px 0; }
+.nav > a { position: relative; padding: 4px 0; white-space: nowrap; }
 .nav > a::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: currentColor; transform: scaleX(0); transform-origin: left; transition: transform .45s var(--ease); }
 .nav > a:hover::after { transform: scaleX(1); }
 .nav-sep { width: 1px; height: 14px; background: currentColor; opacity: .25; }
@@ -92,8 +94,17 @@ body:not(.has-hero) main { padding-top: 68px; }
 
 /* ---------- Hero ---------- */
 .hero { position: relative; height: 92vh; height: 92svh; min-height: 480px; overflow: hidden; background: var(--c); color: #fff; }
-.hero img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transform: scale(1.04); transition: opacity 1.4s var(--ease), transform 2.6s var(--ease); }
-.hero img.in { opacity: 1; transform: none; }
+/* Slideshow: active photo fades in and drifts slowly (Ken Burns) */
+.hero-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transform: scale(1.0); transition: opacity 1.8s var(--ease), transform 10s linear; }
+.hero-img.is-active.in { opacity: 1; transform: scale(1.06); }
+.hero[data-count="1"] .hero-img.is-active.in { transform: scale(1.02); }
+.hero-dots { position: absolute; z-index: 2; right: calc(var(--gutter) + 28px); bottom: clamp(36px, 7vh, 80px); display: flex; gap: 6px; }
+.hero-dots button { width: 28px; height: 20px; display: flex; align-items: flex-end; padding-bottom: 2px; }
+.hero-dots span { position: relative; display: block; width: 100%; height: 1px; background: rgba(255,255,255,.35); overflow: hidden; }
+.hero-dots span::after { content: ''; position: absolute; inset: 0; background: #fff; transform: scaleX(0); transform-origin: left; }
+.hero-dots button.on span::after { animation: dot var(--slide, 6.5s) linear forwards; }
+.hero-dots button.done span::after { transform: none; }
+@keyframes dot { to { transform: none; } }
 .hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.5), rgba(0,0,0,0) 45%), linear-gradient(to bottom, rgba(0,0,0,.3), rgba(0,0,0,0) 20%); pointer-events: none; }
 .hero-text { position: absolute; z-index: 1; left: var(--gutter); right: var(--gutter); bottom: clamp(36px, 7vh, 80px); animation: rise 1.4s .2s var(--ease) both; }
 .hero-text .display { font-size: clamp(52px, 9vw, 148px); }
@@ -200,7 +211,10 @@ body.lb-lock { overflow: hidden; }
   body:not(.has-hero) main { padding-top: 60px; }
   .brand { font-size: 20px; }
   .nav { gap: 14px; font-size: 10.5px; letter-spacing: .1em; }
-  .nav > a[href="/#latest"] { display: none; }
+  .nav-latest { display: none; }
+  .brand-name { display: none; }
+  .brand-mark { height: 20px; }
+  .hero-dots { right: auto; left: var(--gutter); bottom: 18px; }
   .section-head .lede { text-align: left; }
   .about { grid-template-columns: minmax(0, 1fr); }
   .lb-nav { display: none; }
@@ -208,7 +222,7 @@ body.lb-lock { overflow: hidden; }
   .pager .display { font-size: 24px; }
 }
 @media (max-width: 420px) {
-  .nav > a[href="/#albums"] { display: none; }
+  .nav { gap: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

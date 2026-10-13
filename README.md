@@ -11,8 +11,10 @@ A minimal photo website that builds itself from a folder. You never edit code to
 3. Pick an album or type a new name, then click **Upload**.
 4. After about 1–2 minutes the page says **Live!**
 
-In the admin you can also delete photos, set an album cover (◩), choose the homepage hero image (★),
-and give albums an English and a German title and description.
+In the admin you can also:
+- **★** add a photo to the homepage slideshow (several photos crossfade; none starred = newest landscape photo)
+- **◎** set a focus point: tap the most important spot, and crops on phones and album covers keep it in view
+- **◩** set the album cover, **✕** delete a photo, and give albums an English and a German title and description
 
 **Option B: on your Mac**
 1. Drag photos into `photos/<Album name>/`. A new folder means a new album.
@@ -42,7 +44,8 @@ The preview updates automatically when you add photos or edit `site.json`.
 | `name` | Your name: logo, homepage title |
 | `tagline`, `description` | Short texts under your name (EN + DE) |
 | `defaultLanguage` | `"en"` or `"de"` (visitors' browser language is used if it is EN/DE) |
-| `hero` | Homepage photo, e.g. `"Landscapes/iceland.jpg"` (empty = newest landscape photo). Also settable via ★ in admin |
+| `hero` | Homepage slideshow, e.g. `["Landscapes/iceland.jpg", "Street/tokyo.jpg"]` (empty = newest landscape photo). Easiest via ★ in admin |
+| `monogram` | Optional: letters for the logo/icon (default: your initials from `name`) |
 | `latestCount` | How many photos the "Latest" section shows |
 | `about.photo` | Photo for the About page, e.g. `"Portraits/me.jpg"` |
 | `about.text` | About text (EN + DE, new line = new paragraph) |

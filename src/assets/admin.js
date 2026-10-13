@@ -21,7 +21,8 @@
   let user = null;
   let files = [];      // [{path, sha}] under photos/
   let index = {};      // published thumbnails: { "Album/file.jpg": { thumb } }
-  let siteHero = '';
+  let heroes = [];     // homepage slideshow, from site.json "hero"
+  const heroArr = (h) => [].concat(h || []).filter(Boolean);
   const localPreviews = new Map(); // path -> object URL for photos uploaded this session
   let queue = [];      // [{file, album?, url, progress}]
   let busy = false;
@@ -400,7 +401,7 @@
 
   // ---------- Albums ----------
   function thumb(p) {
-    const src = index[p.src]?.thumb || localPreviews.get(p.src);
+    const src = index[p.src]?.thumb ? BASE + index[p.src].thumb : localPreviews.get(p.src);
     return src
       ? `<img src="${esc(src)}" alt="" loading="lazy">`
       : `<span class="pending">${T('processing…', 'wird verarbeitet …')}</span>`;
@@ -426,7 +427,8 @@
               <figcaption>${esc(p.name)}</figcaption>
               <div class="adm-photo-actions">
                 <button data-act="cover" title="${esc(L('Use as album cover', 'Als Albumcover verwenden'))}">◩</button>
-                <button data-act="hero" class="${siteHero === p.src ? 'on' : ''}" title="${esc(L('Use as homepage hero', 'Als Titelbild der Startseite'))}">★</button>
+                <button data-act="focus" title="${esc(L('Set focus point (how it is cropped)', 'Fokuspunkt setzen (Bildausschnitt)'))}">◎</button>
+                <button data-act="hero" class="${heroes.includes(p.src) ? 'on' : ''}" title="${esc(L('Show in homepage slideshow', 'In der Startseiten-Diashow zeigen'))}">★</button>
                 <button data-act="delete" title="${esc(L('Delete photo', 'Foto löschen'))}">✕</button>
               </div>
             </figure>`).join('')}</div>
@@ -436,6 +438,57 @@
       d.addEventListener('toggle', () => d.open ? open.add(d.dataset.folder) : open.delete(d.dataset.folder));
     });
     box.onclick = onAlbumClick;
+  }
+
+  // Focus point: tap the most important spot; crops (hero, album cover) keep it in view.
+  async function openFocus(folder, src) {
+    const img = index[src]?.thumb ? BASE + index[src].thumb : localPreviews.get(src);
+    if (!img) { status(T('This photo is still being processed — try again in a minute.', 'Dieses Foto wird noch verarbeitet — versuch es in einer Minute nochmal.'), 'warn'); return; }
+    const name = src.split('/')[1];
+    const conf = await readJson(`photos/${folder}/_album.json`);
+    let [x, y] = conf.focus?.[name] || [50, 50];
+    const modal = document.createElement('div');
+    modal.className = 'adm-modal';
+    modal.innerHTML = `<div class="adm-focus" role="dialog" aria-modal="true">
+      <p class="eyebrow">${T('Focus point', 'Fokuspunkt')}</p>
+      <h3 class="display">${T('Tap the most important part of the photo', 'Tippe auf das Wichtigste im Bild')}</h3>
+      <div class="focus-stage"><img src="${esc(img)}" alt=""><span class="focus-dot"></span></div>
+      <div class="focus-previews">
+        <figure><div class="pv pv-phone"><img src="${esc(img)}" alt=""></div><figcaption class="eyebrow">${T('Phone', 'Handy')}</figcaption></figure>
+        <figure><div class="pv pv-card"><img src="${esc(img)}" alt=""></div><figcaption class="eyebrow">${T('Album cover', 'Albumcover')}</figcaption></figure>
+        <figure><div class="pv pv-wide"><img src="${esc(img)}" alt=""></div><figcaption class="eyebrow">${T('Desktop', 'Desktop')}</figcaption></figure>
+      </div>
+      <div class="queue-buttons"><button class="btn" data-f="reset">${T('Center', 'Mitte')}</button><span class="spacer"></span><button class="btn" data-f="cancel">${T('Cancel', 'Abbrechen')}</button><button class="btn btn-primary" data-f="save">${T('Save', 'Speichern')}</button></div>
+    </div>`;
+    document.body.appendChild(modal);
+    const update = () => {
+      modal.querySelector('.focus-dot').style.cssText = `left:${x}%;top:${y}%`;
+      modal.querySelectorAll('.pv img').forEach((i) => { i.style.objectPosition = `${x}% ${y}%`; });
+    };
+    update();
+    const stage = modal.querySelector('.focus-stage');
+    const pick = (e) => {
+      const r = stage.querySelector('img').getBoundingClientRect();
+      x = Math.round(Math.min(100, Math.max(0, ((e.clientX - r.left) / r.width) * 100)));
+      y = Math.round(Math.min(100, Math.max(0, ((e.clientY - r.top) / r.height) * 100)));
+      update();
+    };
+    let dragging = false;
+    stage.addEventListener('pointerdown', (e) => { dragging = true; stage.setPointerCapture(e.pointerId); pick(e); });
+    stage.addEventListener('pointermove', (e) => dragging && pick(e));
+    stage.addEventListener('pointerup', () => { dragging = false; });
+    const close = () => modal.remove();
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    modal.querySelector('[data-f="cancel"]').onclick = close;
+    modal.querySelector('[data-f="reset"]').onclick = () => { x = 50; y = 50; update(); };
+    modal.querySelector('[data-f="save"]').onclick = () => {
+      close();
+      guarded(async () => {
+        const fresh = await readJson(`photos/${folder}/_album.json`);
+        fresh.focus = { ...(fresh.focus || {}), [name]: [x, y] };
+        await commit(`Set focus point of ${src}`, [{ path: `photos/${folder}/_album.json`, mode: '100644', type: 'blob', content: `${JSON.stringify(fresh, null, 2)}\n` }]);
+      });
+    };
   }
 
   async function guarded(fn) {
@@ -472,11 +525,17 @@
     if (act === 'hero' && photo) {
       guarded(async () => {
         const site = JSON.parse(await readRepoFile('site.json') || '{}');
-        site.hero = siteHero === photo.dataset.src ? '' : photo.dataset.src;
-        await commit('Update homepage hero image', [{ path: 'site.json', mode: '100644', type: 'blob', content: `${JSON.stringify(site, null, 2)}\n` }]);
-        siteHero = site.hero;
+        const src = photo.dataset.src;
+        const list = heroArr(site.hero);
+        site.hero = list.includes(src) ? list.filter((x) => x !== src) : [...list, src];
+        await commit('Update homepage slideshow', [{ path: 'site.json', mode: '100644', type: 'blob', content: `${JSON.stringify(site, null, 2)}\n` }]);
+        heroes = site.hero;
+        status(heroes.length
+          ? T(`Homepage slideshow: ${heroes.length} photo${heroes.length === 1 ? '' : 's'}.`, `Startseiten-Diashow: ${heroes.length} Foto${heroes.length === 1 ? '' : 's'}.`)
+          : T('No photo starred: the homepage shows your newest landscape photo.', 'Kein Foto markiert: Die Startseite zeigt dein neuestes Querformat-Foto.'), 'ok', true);
       });
     }
+    if (act === 'focus' && photo) openFocus(folder, photo.dataset.src);
     if (act === 'delete-album') {
       const a = albums().find((x) => x.folder === folder);
       if (!confirm(L(`Delete the album "${folder}" with all ${a.photos.length} photos? This cannot be undone here.`, `Das Album "${folder}" mit allen ${a.photos.length} Fotos löschen?`))) return;
@@ -518,11 +577,11 @@
             entries.push({ path: f.path, mode: '100644', type: 'blob', sha: null });
           }
           if (files.some((x) => x.path === `photos/${folder}/_album.json`)) entries.push({ path: `photos/${folder}/_album.json`, mode: '100644', type: 'blob', sha: null });
-          if (siteHero.startsWith(`${folder}/`)) {
+          if (heroes.some((h) => h.startsWith(`${folder}/`))) {
             const site = JSON.parse(await readRepoFile('site.json') || '{}');
-            site.hero = siteHero.replace(`${folder}/`, `${newFolder}/`);
+            site.hero = heroArr(site.hero).map((h) => h.startsWith(`${folder}/`) ? h.replace(`${folder}/`, `${newFolder}/`) : h);
             entries.push({ path: 'site.json', mode: '100644', type: 'blob', content: `${JSON.stringify(site, null, 2)}\n` });
-            siteHero = site.hero;
+            heroes = site.hero;
           }
           for (const [k, v2] of Object.entries(index)) if (k.startsWith(`${folder}/`)) index[k.replace(`${folder}/`, `${newFolder}/`)] = v2;
           open.delete(folder); open.add(newFolder);
@@ -549,7 +608,7 @@
         readRepoFile('site.json').then((s) => JSON.parse(s || '{}')).catch(() => ({})),
       ]);
       index = idx;
-      siteHero = site.hero || '';
+      heroes = heroArr(site.hero);
       render();
     } catch (err) {
       if (err.status === 404 || err.status === 403) signOut('noaccess');

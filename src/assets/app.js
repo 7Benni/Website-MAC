@@ -34,6 +34,41 @@
     }).observe(hero);
   }
 
+  // ---------- Hero slideshow ----------
+  const slides = hero ? [...hero.querySelectorAll('.hero-img')] : [];
+  if (slides.length > 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const DURATION = 6500;
+    const dots = [...hero.querySelectorAll('.hero-dots button')];
+    hero.style.setProperty('--slide', `${DURATION}ms`);
+    let current = 0, timer;
+    const load = (img) => new Promise((res) => {
+      if (img.src) return res();
+      img.onload = res; img.onerror = res;
+      img.srcset = img.dataset.srcset;
+      img.src = img.srcset.split(' ')[0];
+    });
+    const show = async (i) => {
+      clearTimeout(timer);
+      const next = (i + slides.length) % slides.length;
+      await load(slides[next]);
+      slides[current].classList.remove('is-active');
+      slides[next].classList.add('is-active', 'in');
+      dots.forEach((d, k) => { d.classList.remove('on', 'done'); if (k < next) d.classList.add('done'); });
+      void dots[next].offsetWidth; // restart the progress animation
+      dots[next].classList.add('on');
+      current = next;
+      load(slides[(next + 1) % slides.length]); // preload the following photo
+      timer = setTimeout(() => show(current + 1), DURATION);
+    };
+    dots.forEach((d, k) => d.addEventListener('click', () => show(k)));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) clearTimeout(timer);
+      else timer = setTimeout(() => show(current + 1), DURATION);
+    });
+    load(slides[1]);
+    timer = setTimeout(() => show(1), DURATION);
+  }
+
   // ---------- Lightbox ----------
   const icon = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
   let lb, items = [], index = 0;

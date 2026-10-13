@@ -5,7 +5,7 @@
 let BASE = '';
 export const setBase = (b) => { BASE = String(b || '').replace(/\/+$/, ''); };
 const withBase = (html) => BASE ? html
-  .replace(/(\s(?:href|src|srcset|content|data-album-href)=")\/(?!\/)/g, `$1${BASE}/`)
+  .replace(/(\s(?:href|src|srcset|data-srcset|content|data-album-href)=")\/(?!\/)/g, `$1${BASE}/`)
   .replace(/, \/img\//g, `, ${BASE}/img/`) : html;
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -74,24 +74,30 @@ function layout(ctx, { title, body, bodyClass = '', description, image, head = '
 <meta name="description" content="${esc(desc)}">
 <meta property="og:title" content="${esc(pageTitle)}">
 <meta property="og:description" content="${esc(desc)}">
-${image ? `<meta property="og:image" content="${esc(largest(image))}">` : ''}
+<meta property="og:type" content="website">
+${image ? `<meta property="og:image" content="${esc(ctx.siteUrl ? ctx.siteUrl + largest(image) : largest(image))}">
+<meta name="twitter:card" content="summary_large_image">` : ''}
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="#888" stroke-width="2.5"/><circle cx="16" cy="16" r="4" fill="#888"/></svg>')}">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/fonts/cormorant-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/style.css">
 ${head}<script>
 (function(){var d=document.documentElement;try{var th=localStorage.getItem('theme');if(th)d.dataset.theme=th;var l=localStorage.getItem('lang');if(!l){var n=(navigator.language||'').slice(0,2);if(n==='de'||n==='en')l=n}if(l){d.dataset.lang=l;d.lang=l}}catch(e){}})();
 </script>
-<noscript><style>.tile img,.card img,.hero img{opacity:1}</style></noscript>
+<noscript><style>.tile img,.card img,.hero-img.is-active{opacity:1}</style></noscript>
 </head>
 <body class="${bodyClass}">
 <header class="site-header">
-  <a class="brand" href="/">${esc(site.name)}</a>
+  <a class="brand" href="/" aria-label="${esc(site.name)}">
+    <svg class="brand-mark" viewBox="0 0 ${ctx.mark.width} ${ctx.mark.height}" aria-hidden="true"><path d="${ctx.mark.d}"/></svg>
+    <span class="brand-name">${esc(site.name)}</span>
+  </a>
   <nav class="nav">
-    <a href="/#latest">${t('latest')}</a>
-    <a href="/#albums">${t('albums')}</a>
-    <a href="/about/">${t('about')}</a>
+    <a class="nav-latest" href="/#latest">${t('latest')}</a>
+    <a class="nav-albums" href="/#albums">${t('albums')}</a>
+    <a class="nav-about" href="/about/">${t('about')}</a>
     <span class="nav-sep" aria-hidden="true"></span>
     <button class="lang-toggle" type="button" aria-label="Language / Sprache"><span class="l-en">EN</span><span class="l-de">DE</span></button>
     <button class="theme-toggle" type="button" aria-label="Toggle dark mode">${ICONS.moon}${ICONS.sun}</button>
@@ -127,16 +133,21 @@ function tile(p, { showAlbum = false, rowWidth = 420 } = {}) {
 </a>`;
 }
 
+const focus = (p) => `object-position:${p.focus[0]}% ${p.focus[1]}%`;
+
 const grid = (photos, opts) => `<div class="grid">${photos.map((p) => tile(p, opts)).join('')}</div>`;
 
 export function home(ctx) {
-  const { site, albums, latest, hero } = ctx;
+  const { site, albums, latest, hero, heroes } = ctx;
   if (!latest.length) {
     return layout(ctx, { body: `<section class="empty" id="latest"><span id="albums"></span><h1 class="display">${esc(site.name)}</h1><p>${t('empty')}</p><p><a href="/admin/">${t('upload')}</a></p></section>` });
   }
   const body = `
-<section class="hero" style="--c:${hero.color}">
-  <img src="${smallest(hero)}" srcset="${srcset(hero)}" sizes="100vw" alt="" fetchpriority="high" decoding="async" onload="this.classList.add('in')">
+<section class="hero" style="--c:${hero.color}" data-count="${heroes.length}">
+  ${heroes.map((h, i) => i === 0
+    ? `<img class="hero-img is-active" src="${smallest(h)}" srcset="${srcset(h)}" sizes="100vw" alt="" fetchpriority="high" decoding="async" style="${focus(h)}" onload="this.classList.add('in')">`
+    : `<img class="hero-img" data-srcset="${srcset(h)}" sizes="100vw" alt="" decoding="async" style="${focus(h)}">`).join('\n  ')}
+  ${heroes.length > 1 ? `<div class="hero-dots">${heroes.map((_, i) => `<button type="button" aria-label="${i + 1}"${i === 0 ? ' class="on"' : ''}><span></span></button>`).join('')}</div>` : ''}
   <div class="hero-text">
     <h1 class="display">${esc(site.name)}</h1>
     <p class="eyebrow">${t(site.tagline)}</p>
@@ -156,7 +167,7 @@ ${albums.length ? `<section class="section" id="albums">
   <div class="section-head"><h2 class="display">${t('albums')}</h2></div>
   <div class="cards">
     ${albums.map((a) => `<a class="card" href="/album/${a.slug}/">
-      <div class="card-img" style="--c:${a.cover.color}"><img src="${smallest(a.cover)}" srcset="${srcset(a.cover)}" sizes="(max-width: 700px) 100vw, 33vw" alt="" loading="lazy" decoding="async" onload="this.classList.add('in')"></div>
+      <div class="card-img" style="--c:${a.cover.color}"><img src="${smallest(a.cover)}" srcset="${srcset(a.cover)}" sizes="(max-width: 700px) 100vw, 33vw" alt="" loading="lazy" decoding="async" style="${focus(a.cover)}" onload="this.classList.add('in')"></div>
       <div class="card-meta"><h3>${t(a.title)}</h3><span class="eyebrow">${count(a.photos.length)}</span></div>
     </a>`).join('')}
   </div>
