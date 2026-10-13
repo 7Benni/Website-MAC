@@ -21,7 +21,8 @@ const STRINGS = {
   next: { en: 'Next', de: 'Nächstes' },
   notFound: { en: 'This page doesn’t exist.', de: 'Diese Seite gibt es nicht.' },
   home: { en: 'Back home', de: 'Zur Startseite' },
-  empty: { en: 'No photos yet. Drop some into the photos folder or upload them via /admin.', de: 'Noch keine Fotos. Lege welche in den photos-Ordner oder lade sie über /admin hoch.' },
+  empty: { en: 'No photos yet.', de: 'Noch keine Fotos.' },
+  upload: { en: 'Upload your first photos →', de: 'Lade deine ersten Fotos hoch →' },
 };
 
 // Bilingual text: accepts a {en, de} object, a plain string, or a STRINGS key.
@@ -131,7 +132,7 @@ const grid = (photos, opts) => `<div class="grid">${photos.map((p) => tile(p, op
 export function home(ctx) {
   const { site, albums, latest, hero } = ctx;
   if (!latest.length) {
-    return layout(ctx, { body: `<section class="empty"><h1 class="display">${esc(site.name)}</h1><p>${t('empty')}</p></section>` });
+    return layout(ctx, { body: `<section class="empty" id="latest"><span id="albums"></span><h1 class="display">${esc(site.name)}</h1><p>${t('empty')}</p><p><a href="/admin/">${t('upload')}</a></p></section>` });
   }
   const body = `
 <section class="hero" style="--c:${hero.color}">
