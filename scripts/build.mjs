@@ -114,12 +114,12 @@ async function readJson(file, fallback) {
 
 function repoConfig(site) {
   if (site.admin?.repo) return { repo: site.admin.repo, branch: site.admin.branch || 'main' };
-  let url = process.env.REPOSITORY_URL || '';
+  let url = process.env.GITHUB_REPOSITORY ? `https://github.com/${process.env.GITHUB_REPOSITORY}` : '';
   if (!url) {
     try { url = execSync('git remote get-url origin', { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { /* no git */ }
   }
   const m = url.match(/github\.com[/:]([^/]+\/[^/.]+?)(?:\.git)?$/);
-  let branch = process.env.BRANCH || process.env.HEAD;
+  let branch = process.env.GITHUB_REF_NAME;
   if (!branch) {
     try { branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { /* no git */ }
   }
@@ -129,6 +129,7 @@ function repoConfig(site) {
 async function build() {
   const started = Date.now();
   const tpl = await import(`../src/templates.mjs?t=${started}`);
+  tpl.setBase(process.env.BASE_PATH);
   const site = await readJson(path.join(ROOT, 'site.json'), {});
   await fs.mkdir(CACHE, { recursive: true });
   await fs.rm(DIST, { recursive: true, force: true });
@@ -236,7 +237,7 @@ async function build() {
   const index = {};
   for (const p of valid) index[p.src] = { thumb: `/img/${p.sizes[0].file}`, w: p.w, h: p.h };
   await write('data/photos.json', JSON.stringify(index));
-  await write('version.json', JSON.stringify({ commit: process.env.COMMIT_REF || null, built: new Date().toISOString() }));
+  await write('version.json', JSON.stringify({ commit: process.env.GITHUB_SHA || null, built: new Date().toISOString() }));
 
   // Static assets
   await fs.cp(path.join(ROOT, 'src', 'assets'), path.join(DIST, 'assets'), { recursive: true });

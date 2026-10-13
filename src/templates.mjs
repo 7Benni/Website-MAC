@@ -1,6 +1,13 @@
 // HTML templates. Text in both languages is rendered side by side and the
 // inactive language is hidden with CSS, so switching is instant.
 
+// Base path when the site lives in a subfolder (e.g. GitHub Pages: /Website-MAC).
+let BASE = '';
+export const setBase = (b) => { BASE = String(b || '').replace(/\/+$/, ''); };
+const withBase = (html) => BASE ? html
+  .replace(/(\s(?:href|src|srcset|content|data-album-href)=")\/(?!\/)/g, `$1${BASE}/`)
+  .replace(/, \/img\//g, `, ${BASE}/img/`) : html;
+
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const STRINGS = {
@@ -52,12 +59,12 @@ const ICONS = {
   moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg>',
 };
 
-function layout(ctx, { title, body, bodyClass = '', description, image, scripts = ['/assets/app.js'] }) {
+function layout(ctx, { title, body, bodyClass = '', description, image, head = '', scripts = ['/assets/app.js'] }) {
   const { site } = ctx;
   const lang = site.defaultLanguage === 'de' ? 'de' : 'en';
   const pageTitle = title ? `${title} — ${site.name}` : `${site.name} — ${site.tagline?.[lang] || ''}`;
   const desc = description || site.description?.[lang] || '';
-  return `<!doctype html>
+  return withBase(`<!doctype html>
 <html lang="${lang}" data-lang="${lang}">
 <head>
 <meta charset="utf-8">
@@ -72,7 +79,7 @@ ${image ? `<meta property="og:image" content="${esc(largest(image))}">` : ''}
 <link rel="preload" href="/fonts/cormorant-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/inter.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/style.css">
-<script>
+${head}<script>
 (function(){var d=document.documentElement;try{var th=localStorage.getItem('theme');if(th)d.dataset.theme=th;var l=localStorage.getItem('lang');if(!l){var n=(navigator.language||'').slice(0,2);if(n==='de'||n==='en')l=n}if(l){d.dataset.lang=l;d.lang=l}}catch(e){}})();
 </script>
 <noscript><style>.tile img,.card img,.hero img{opacity:1}</style></noscript>
@@ -102,7 +109,7 @@ ${body}
 </footer>
 ${scripts.map((s) => `<script src="${s}" defer></script>`).join('\n')}
 </body>
-</html>`;
+</html>`);
 }
 
 function tile(p, { showAlbum = false, rowWidth = 420 } = {}) {
@@ -205,7 +212,9 @@ export function notFound(ctx) {
 
 export function admin(ctx, repo) {
   const body = `<div id="admin" class="admin"></div>
-<script>window.ADMIN_CONFIG=${JSON.stringify(repo).replace(/</g, '\\u003c')};</script>`;
-  return layout(ctx, { title: 'Admin', body, bodyClass: 'is-admin', scripts: ['/assets/app.js', '/assets/admin.js'] })
-    .replace('<link rel="stylesheet" href="/assets/style.css">', '<link rel="stylesheet" href="/assets/style.css">\n<link rel="stylesheet" href="/assets/admin.css">\n<meta name="robots" content="noindex">');
+<script>window.ADMIN_CONFIG=${JSON.stringify({ ...repo, base: BASE }).replace(/</g, '\\u003c')};</script>`;
+  return layout(ctx, {
+    title: 'Admin', body, bodyClass: 'is-admin', scripts: ['/assets/app.js', '/assets/exif-clean.js', '/assets/admin.js'],
+    head: '<link rel="stylesheet" href="/assets/admin.css">\n<meta name="robots" content="noindex">\n',
+  });
 }

@@ -102,3 +102,12 @@ body.dragging .drop { background: var(--bg); }
 .adm-photo-actions button:hover { background: #000; }
 .adm-photo-actions button.on { background: #fff; color: #000; }
 body.adm-busy .adm-albums { opacity: .6; pointer-events: none; }
+.adm-login { max-width: 560px; margin: 0 auto; }
+.adm-key { display: flex; gap: 10px; width: 100%; margin-top: 8px; }
+.adm-key input { flex: 1; }
+.adm-help { width: 100%; text-align: left; font-size: 14px; color: var(--muted); margin-top: 8px; }
+.adm-help summary { cursor: pointer; text-align: center; }
+.adm-help summary:hover { color: var(--fg); }
+.adm-help ol { margin: 16px 0 0; padding-left: 20px; display: grid; gap: 8px; line-height: 1.5; }
+.adm-help a { color: var(--fg); border-bottom: 1px solid var(--line); }
+.adm-help b { color: var(--fg); font-weight: 500; }

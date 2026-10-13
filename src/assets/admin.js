@@ -1,5 +1,5 @@
-// Admin: sign in with GitHub, drag & drop photos, manage albums.
-// Every change is a commit to the GitHub repository; Netlify then rebuilds the site.
+// Admin: sign in with a GitHub access key, drag & drop photos, manage albums.
+// Every change is a commit to the GitHub repository; GitHub Actions then rebuilds the site.
 (() => {
   const cfg = window.ADMIN_CONFIG || {};
   const el = document.getElementById('admin');
@@ -8,18 +8,16 @@
   const T = (en, de) => en === de ? esc(en) : `<span lang="en">${esc(en)}</span><span lang="de">${esc(de)}</span>`;
   const L = (en, de) => (document.documentElement.dataset.lang === 'de' ? de : en);
   function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
-  const ss = {
-    get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
-    set: (k, v) => { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch { /* ignore */ } },
+  const BASE = cfg.base || '';
+  const MAX_EDGE = 3000; // photos are shrunk to this long edge before upload
+  // The key is remembered on this device, so you only paste it once.
+  const store = {
+    get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* ignore */ } },
   };
 
-  // ---------- Token from OAuth redirect ----------
-  const hash = new URLSearchParams(location.hash.slice(1));
-  if (hash.get('token')) ss.set('gh_token', hash.get('token'));
-  const loginError = hash.get('error');
-  if (location.hash) history.replaceState(null, '', location.pathname);
-
-  let token = ss.get('gh_token');
+  let loginError = '';
+  let token = store.get('gh_token');
   let user = null;
   let files = [];      // [{path, sha}] under photos/
   let index = {};      // published thumbnails: { "Album/file.jpg": { thumb } }
@@ -42,7 +40,7 @@
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store',
     });
-    if (res.status === 401) { signOut(); throw new Error(L('Session expired, please sign in again.', 'Sitzung abgelaufen, bitte erneut anmelden.')); }
+    if (res.status === 401) { signOut('invalid'); throw new Error(L('Your access key is invalid or expired.', 'Dein Zugangsschlüssel ist ungültig oder abgelaufen.')); }
     const data = res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) { const e = new Error(data?.message || `GitHub error ${res.status}`); e.status = res.status; throw e; }
     return data;
@@ -71,6 +69,39 @@
       xhr.onerror = () => reject(new Error(L('Network error during upload', 'Netzwerkfehler beim Hochladen')));
       xhr.send(JSON.stringify({ content: base64, encoding: 'base64' }));
     });
+  }
+
+  // Shrink big photos to MAX_EDGE and remove GPS location (the repository is public).
+  // Camera info (EXIF) is kept. Returns { blob, name }.
+  async function prepare(file) {
+    const X = window.ExifClean;
+    const isJpeg = /\.jpe?g$/i.test(file.name);
+    if (!isJpeg && !/\.(png|webp)$/i.test(file.name)) return { blob: file, name: file.name };
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { return { blob: file, name: file.name }; }
+    const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
+    const bytes = isJpeg ? new Uint8Array(await file.arrayBuffer()) : null;
+    const pos = bytes && X.find(bytes);
+    const cleanSeg = (opts) => { try { return X.clean(bytes.subarray(pos.start, pos.end), opts); } catch { return { seg: null, hadGps: true }; } };
+
+    if (scale === 1) {
+      bmp.close();
+      if (!pos) return { blob: file, name: file.name };
+      const { seg, hadGps } = cleanSeg();
+      return hadGps ? { blob: new Blob([X.replace(bytes, pos, seg)], { type: 'image/jpeg' }), name: file.name } : { blob: file, name: file.name };
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    bmp.close();
+    const out = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.92));
+    if (!out) return { blob: file, name: file.name };
+    const seg = pos ? cleanSeg({ resetOrientation: true }).seg : null;
+    const jpeg = X.insert(new Uint8Array(await out.arrayBuffer()), seg);
+    return { blob: new Blob([jpeg], { type: 'image/jpeg' }), name: file.name.replace(/\.[^.]+$/, '.jpg') };
   }
 
   // One commit on top of the branch; retries if the branch moved meanwhile.
@@ -151,22 +182,22 @@
     const tick = async () => {
       if (watching !== sha) return;
       try {
-        const v = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => r.json());
+        const v = await fetch(`${BASE}/version.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => r.json());
         if (v.commit === sha) {
-          index = await fetch(`/data/photos.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => index);
+          index = await fetch(`${BASE}/data/photos.json?t=${Date.now()}`, { cache: 'no-store' }).then((r) => r.json()).catch(() => index);
           renderAlbums();
-          status(`${T('Live! Your changes are on the website.', 'Online! Deine Änderungen sind auf der Website.')} <a href="/" target="_blank">${T('View site →', 'Website ansehen →')}</a>`, 'ok', true);
+          status(`${T('Live! Your changes are on the website.', 'Online! Deine Änderungen sind auf der Website.')} <a href="${BASE}/" target="_blank">${T('View site →', 'Website ansehen →')}</a>`, 'ok', true);
           return;
         }
       } catch { /* not deployed yet */ }
       if (Date.now() - started < 8 * 60e3) setTimeout(tick, 6000);
-      else status(T('Saved to GitHub. The rebuild is taking longer than usual — check Netlify if it doesn’t show up.', 'Auf GitHub gespeichert. Der Build dauert länger als üblich — prüfe Netlify, falls nichts erscheint.'), 'info', true);
+      else status(T('Saved to GitHub. The rebuild is taking longer than usual — check the “Actions” tab on GitHub if it doesn’t show up.', 'Auf GitHub gespeichert. Der Build dauert länger als üblich — prüfe den Tab „Actions“ auf GitHub, falls nichts erscheint.'), 'info', true);
     };
     setTimeout(tick, 15000);
   }
 
   // ---------- Views ----------
-  function signOut() { ss.set('gh_token', null); token = null; user = null; render(); }
+  function signOut(reason = '') { store.set('gh_token', null); token = null; user = null; loginError = reason; render(); }
 
   function render() {
     if (!cfg.repo) {
@@ -175,24 +206,45 @@
       return;
     }
     if (!token) {
-      const msg = loginError === 'not_allowed'
-        ? T('This GitHub account is not allowed.', 'Dieses GitHub-Konto ist nicht berechtigt.')
-        : loginError ? T('Sign-in failed, please try again.', 'Anmeldung fehlgeschlagen, bitte erneut versuchen.') : '';
-      el.innerHTML = `<div class="adm-center">
+      const msg = {
+        invalid: T('That key didn’t work — it may be mistyped or expired.', 'Dieser Schlüssel hat nicht funktioniert — vielleicht vertippt oder abgelaufen.'),
+        noaccess: T(`That key has no write access to ${cfg.repo}.`, `Dieser Schlüssel hat keinen Schreibzugriff auf ${cfg.repo}.`),
+      }[loginError] || '';
+      const [owner, repoName] = cfg.repo.split('/');
+      const newKey = `https://github.com/settings/personal-access-tokens/new?name=${encodeURIComponent('Portfolio admin')}&description=${encodeURIComponent('Upload photos to my website')}&target_name=${encodeURIComponent(owner)}&expires_in=366&contents=write`;
+      el.innerHTML = `<div class="adm-center adm-login">
         <p class="eyebrow">Admin</p>
         <h1 class="display">${T('Welcome back', 'Willkommen zurück')}</h1>
+        <p>${T('Paste your GitHub access key to sign in. This device remembers it.', 'Füge deinen GitHub-Zugangsschlüssel ein. Dieses Gerät merkt ihn sich.')}</p>
         ${msg ? `<p class="adm-error">${msg}</p>` : ''}
-        <a class="btn btn-primary" href="/auth">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-          ${T('Sign in with GitHub', 'Mit GitHub anmelden')}
-        </a></div>`;
+        <form class="adm-key">
+          <input type="password" name="key" placeholder="github_pat_…" autocomplete="off" spellcheck="false" required>
+          <button class="btn btn-primary">${T('Sign in', 'Anmelden')}</button>
+        </form>
+        <details class="adm-help">
+          <summary>${T('No key yet? Create one (2 minutes)', 'Noch kein Schlüssel? So erstellst du einen (2 Minuten)')}</summary>
+          <ol>
+            <li><a href="${newKey}" target="_blank" rel="noopener">${T('Open GitHub → new access key', 'GitHub öffnen → neuer Zugangsschlüssel')} ↗</a></li>
+            <li>${T('Expiration: pick up to 1 year (you just paste a new key when it runs out).', 'Ablauf: bis zu 1 Jahr (danach einfach einen neuen Schlüssel einfügen).')}</li>
+            <li>${T('Repository access: “Only select repositories” →', 'Repository-Zugriff: „Only select repositories“ →')} <b>${esc(repoName)}</b></li>
+            <li>${T('Permissions → Repository permissions → Contents: “Read and write”', 'Permissions → Repository permissions → Contents: „Read and write“')}</li>
+            <li>${T('Click “Generate token”, copy it and paste it above.', 'Auf „Generate token“ klicken, kopieren und oben einfügen.')}</li>
+          </ol>
+        </details></div>`;
+      el.querySelector('.adm-key').onsubmit = (e) => {
+        e.preventDefault();
+        token = e.target.key.value.trim();
+        store.set('gh_token', token);
+        loginError = '';
+        start();
+      };
       return;
     }
     el.innerHTML = `
       <div class="adm-bar">
         <div><p class="eyebrow">Admin</p><h1 class="display">${T('Your photos', 'Deine Fotos')}</h1></div>
         <div class="adm-user">${user ? `<img src="${esc(user.avatar_url)}" alt=""><span>${esc(user.login)}</span>` : ''}
-          <a href="/" target="_blank">${T('View site', 'Website')}</a><button class="link" data-act="signout">${T('Sign out', 'Abmelden')}</button></div>
+          <a href="${BASE}/" target="_blank">${T('View site', 'Website')}</a><button class="link" data-act="signout">${T('Sign out', 'Abmelden')}</button></div>
       </div>
       <div class="adm-status" hidden></div>
       <section class="adm-upload">
@@ -283,12 +335,13 @@
         while (next < items.length) {
           const x = items[next++];
           const album = cleanName(x.album || target);
-          let name = cleanFile(x.file.name), n = 2;
+          const ready = await prepare(x.file);
+          let name = cleanFile(ready.name), n = 2;
           const [, base, ext] = name.match(/^(.*?)(\.[^.]+)?$/);
           while (taken.has(`photos/${album}/${name}`.toLowerCase())) name = `${base}-${n++}${ext || ''}`;
           const path = `photos/${album}/${name}`;
           taken.add(path.toLowerCase());
-          const sha = await uploadBlob(await readAsBase64(x.file), (p) => { x.progress = p * 0.98; updateBars(); });
+          const sha = await uploadBlob(await readAsBase64(ready.blob), (p) => { x.progress = p * 0.98; updateBars(); });
           x.progress = 1; updateBars();
           entries.push({ path, mode: '100644', type: 'blob', sha });
           localPreviews.set(path.slice('photos/'.length), x.url);
@@ -489,21 +542,18 @@
     try {
       const [u, repo] = await Promise.all([gh('/user'), gh(`/repos/${cfg.repo}`)]);
       user = u;
-      if (!repo.permissions?.push) {
-        ss.set('gh_token', null); token = null;
-        el.innerHTML = `<div class="adm-center"><h1 class="display">${T('No access', 'Kein Zugriff')}</h1><p>${T(`The account ${u.login} can't edit ${cfg.repo}.`, `Das Konto ${u.login} darf ${cfg.repo} nicht bearbeiten.`)}</p></div>`;
-        return;
-      }
+      if (!repo.permissions?.push) { signOut('noaccess'); return; }
       const [, idx, site] = await Promise.all([
         loadTree(),
-        fetch('/data/photos.json', { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
+        fetch(`${BASE}/data/photos.json`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),
         readRepoFile('site.json').then((s) => JSON.parse(s || '{}')).catch(() => ({})),
       ]);
       index = idx;
       siteHero = site.hero || '';
       render();
     } catch (err) {
-      if (token) status(esc(err.message), 'error', true);
+      if (err.status === 404 || err.status === 403) signOut('noaccess');
+      else if (token) status(esc(err.message), 'error', true);
     }
   }
   start();

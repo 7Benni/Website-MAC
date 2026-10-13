@@ -32,6 +32,8 @@ watch(path.join(ROOT, 'site.json'));
 
 http.createServer((req, res) => {
   let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const base = (process.env.BASE_PATH || '').replace(/\/+$/, '');
+  if (base && p.startsWith(base)) p = p.slice(base.length) || '/';
   let file = path.join(DIST, p);
   if (!file.startsWith(DIST)) { res.writeHead(403); return res.end(); }
   if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');

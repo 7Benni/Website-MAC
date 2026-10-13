@@ -5,7 +5,8 @@ A minimal photo website that builds itself from a folder. You never edit code to
 ## Adding photos (daily use)
 
 **Option A: in the browser (from anywhere, even your phone)**
-1. Go to `https://<your-site>/admin` and click **Sign in with GitHub**.
+1. Go to `https://7benni.github.io/Website-MAC/admin/`.
+   The first time on a device, paste your GitHub access key (see setup below). The device remembers it.
 2. Drag photos (or a whole folder; it becomes an album) onto the page.
 3. Pick an album or type a new name, then click **Upload**.
 4. After about 1–2 minutes the page says **Live!**
@@ -19,9 +20,11 @@ and give albums an English and a German title and description.
 
 Good to know:
 - Photos are sorted newest first, by the date your camera saved in the file.
-- Upload your normal JPG exports. Large files are fine; the website makes small, fast versions itself.
+- Upload your normal JPG exports. Large photos are automatically shrunk to 3000px before upload
+  (enough for the website and keeps the repository small). Your originals on your Mac stay untouched
+  when you upload via the browser.
+- **GPS/location data is removed** before anything is uploaded, because the repository is public. Camera info stays.
 - HEIC (iPhone) files are not supported. Export them as JPG.
-- GPS/location data is **removed** from the photos shown on the website.
 
 ## Preview on your Mac
 
@@ -52,38 +55,40 @@ Per album (optional), `photos/<Album>/_album.json`. The admin writes it for you:
 ```
 `order` pins albums to a position; otherwise the album with the newest photos comes first.
 
-## One-time setup (about 15 minutes)
+## One-time setup (about 10 minutes)
 
-### 1. Put the project on GitHub
-Create a new repository on github.com (private is fine), for example `portfolio`. Then in this folder:
-```bash
-git remote add origin https://github.com/<you>/portfolio.git
-git push -u origin main
-```
-(Or use GitHub Desktop: *Add existing repository*, then *Publish*.)
+### 1. Make the repository public
+GitHub Pages is free only for public repositories.
+GitHub → your repository → **Settings → General → Danger Zone → Change visibility → Public**.
+Only web-sized photos without location data end up there; your code contains no secrets.
 
-### 2. Connect Netlify
-1. Create a free account on [netlify.com](https://netlify.com) (sign up with GitHub).
-2. **Add new site → Import an existing project → GitHub** and choose your repository.
-3. Keep the default settings (they come from `netlify.toml`) and click **Deploy**.
-4. Note your site address, e.g. `https://benjamin-krause.netlify.app`. You can rename it or add your own domain later.
+### 2. Turn on GitHub Pages
+**Settings → Pages → Build and deployment → Source: GitHub Actions**.
+Every change (upload, Publish.command, admin action) now rebuilds and publishes the site automatically.
+Progress is visible in the **Actions** tab.
 
-### 3. Enable "Sign in with GitHub" for the admin
-1. Open [github.com/settings/developers](https://github.com/settings/developers) → **OAuth Apps → New OAuth App**
-   - Homepage URL: `https://<your-site>.netlify.app`
-   - Authorization callback URL: `https://<your-site>.netlify.app/auth/callback`
-2. Copy the **Client ID**, then click **Generate a new client secret** and copy it.
-3. In Netlify: **Site configuration → Environment variables**, add:
-   - `GITHUB_CLIENT_ID`: the client ID
-   - `GITHUB_CLIENT_SECRET`: the secret
-   - `ALLOWED_USERS`: your GitHub username (only you can sign in)
-4. **Deploys → Trigger deploy**. Then open `/admin`.
+Your site: `https://7benni.github.io/Website-MAC/`
 
-If you add your own domain later, update both URLs in the GitHub OAuth App.
+### 3. Create the admin access key
+1. Open the admin page and click *“No key yet? Create one”*. The link opens GitHub with most fields filled in.
+   (Or go to GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens → Generate new token**.)
+2. Expiration: up to 1 year.
+3. Repository access: **Only select repositories → Website-MAC**.
+4. Permissions → Repository permissions → **Contents: Read and write**.
+5. **Generate token**, copy it, paste it into the admin page.
+
+The key only works for this one repository. Treat it like a password. If it leaks, delete it on GitHub
+and create a new one.
+
+### Later: own domain or own server
+- **Own domain** (e.g. `benjaminkrause.de`): Settings → Pages → Custom domain. Nothing else to change.
+- **Own server / Raspberry Pi**: `npm run build` creates a ready-to-serve `dist/` folder that any web server can serve.
 
 ## How it works (for the curious)
 
 - `scripts/build.mjs` reads `photos/`, creates WebP images in three sizes, reads EXIF, and writes static HTML to `dist/`. Processed images are cached, so a rebuild only handles new photos.
 - `src/templates.mjs` holds the page layouts, and `src/assets/` the CSS and JavaScript (lightbox, theme/language toggle, admin).
-- `netlify/functions/` handles the GitHub sign-in. The admin then commits photos straight to your repository, and every commit triggers a Netlify rebuild.
+- `.github/workflows/deploy.yml` builds and publishes the site on GitHub Pages after every commit.
+- The admin talks directly to the GitHub API with your access key and commits photos to the repository.
+- `src/assets/exif-clean.js` removes GPS location while keeping camera info, used by the admin and by `scripts/prepare.mjs` (Publish.command).
 - Fonts are self-hosted (no Google Fonts requests). The site has no cookies and no tracking.
