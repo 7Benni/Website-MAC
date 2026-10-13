@@ -1,0 +1,26 @@
+{
+  "name": "Benjamin Krause",
+  "tagline": { "en": "Photography", "de": "Fotografie" },
+  "description": {
+    "en": "A collection of moments, light and places.",
+    "de": "Eine Sammlung von Momenten, Licht und Orten."
+  },
+  "defaultLanguage": "en",
+  "hero": "",
+  "latestCount": 30,
+  "about": {
+    "photo": "",
+    "text": {
+      "en": "Hi, I'm Benjamin. I photograph whatever catches my eye: people, streets and landscapes.\nGet in touch if you'd like to work together.",
+      "de": "Hallo, ich bin Benjamin. Ich fotografiere, was mir ins Auge fällt: Menschen, Straßen und Landschaften.\nMelde dich gern, wenn du zusammenarbeiten möchtest."
+    }
+  },
+  "contact": {
+    "email": "",
+    "instagram": ""
+  },
+  "imprint": {
+    "en": "",
+    "de": ""
+  }
+}
