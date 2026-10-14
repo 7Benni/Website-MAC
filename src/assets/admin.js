@@ -17,7 +17,31 @@
   };
 
   let loginError = '';
-  let token = store.get('gh_token');
+  // The GitHub key never stays unlocked: it is stored encrypted with your admin
+  // password, and every visit to /admin asks for that password again.
+  let token = null;
+  store.set('gh_token', null); // remove keys saved unencrypted by older versions
+  const VAULT = 'gh_vault';
+  const hasVault = () => !!store.get(VAULT);
+  let pendingPassword = null; // set during first setup, saved once the key is verified
+
+  const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  async function deriveKey(password, salt) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 310000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  async function lockToken(tok, password) {
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await deriveKey(password, salt), new TextEncoder().encode(tok));
+    store.set(VAULT, JSON.stringify({ salt: b64(salt), iv: b64(iv), data: b64(data) }));
+  }
+  async function unlockToken(password) {
+    const v = JSON.parse(store.get(VAULT));
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes(v.iv) }, await deriveKey(password, bytes(v.salt)), bytes(v.data));
+    return new TextDecoder().decode(plain);
+  }
   let user = null;
   let files = [];      // [{path, sha}] under photos/
   let index = {};      // published thumbnails: { "Album/file.jpg": { thumb } }
@@ -219,7 +243,11 @@
   }
 
   // ---------- Views ----------
-  function signOut(reason = '') { store.set('gh_token', null); token = null; user = null; loginError = reason; render(); }
+  function signOut(reason = '') {
+    token = null; user = null; pendingPassword = null; loginError = reason;
+    if (reason === 'invalid' || reason === 'noaccess') store.set(VAULT, null); // the saved key no longer works
+    render();
+  }
 
   function render() {
     if (!cfg.repo) {
@@ -229,34 +257,83 @@
     }
     if (!token) {
       const msg = {
-        invalid: T('That key didn’t work — it may be mistyped or expired.', 'Dieser Schlüssel hat nicht funktioniert — vielleicht vertippt oder abgelaufen.'),
+        invalid: T('That key didn’t work — it may be mistyped or expired. Please set it up again.', 'Dieser Schlüssel hat nicht funktioniert — vielleicht vertippt oder abgelaufen. Bitte neu einrichten.'),
         noaccess: T(`That key has no write access to ${cfg.repo}.`, `Dieser Schlüssel hat keinen Schreibzugriff auf ${cfg.repo}.`),
+        wrongpw: T('Wrong password.', 'Falsches Passwort.'),
+        mismatch: T('The passwords don’t match.', 'Die Passwörter stimmen nicht überein.'),
+        short: T('Please use at least 6 characters.', 'Bitte mindestens 6 Zeichen verwenden.'),
       }[loginError] || '';
       const [owner, repoName] = cfg.repo.split('/');
+      const userField = `<input class="sr-only" type="text" name="username" value="${esc(owner)}" autocomplete="username" tabindex="-1" aria-hidden="true">`;
+
+      if (hasVault()) {
+        el.innerHTML = `<div class="adm-center adm-login">
+          <p class="eyebrow">Admin</p>
+          <h1 class="display">${T('Welcome back', 'Willkommen zurück')}</h1>
+          <p>${T('Enter your admin password.', 'Gib dein Admin-Passwort ein.')}</p>
+          ${msg ? `<p class="adm-error">${msg}</p>` : ''}
+          <form class="adm-key adm-unlock">
+            ${userField}
+            <input type="password" name="password" placeholder="${esc(L('Password', 'Passwort'))}" autocomplete="current-password" required autofocus>
+            <button class="btn btn-primary">${T('Sign in', 'Anmelden')}</button>
+          </form>
+          <button class="link adm-reset" type="button">${T('Forgot password / use a different key', 'Passwort vergessen / anderen Schlüssel verwenden')}</button>
+        </div>`;
+        el.querySelector('.adm-unlock').onsubmit = async (e) => {
+          e.preventDefault();
+          const btn = e.target.querySelector('button');
+          btn.disabled = true;
+          try {
+            token = await unlockToken(e.target.password.value);
+            loginError = '';
+            start();
+          } catch {
+            loginError = 'wrongpw';
+            render();
+          }
+        };
+        el.querySelector('.adm-reset').onclick = () => {
+          if (!confirm(L('Remove the saved key from this device? You will need to paste your GitHub key again.', 'Gespeicherten Schlüssel von diesem Gerät entfernen? Du musst dann deinen GitHub-Schlüssel neu einfügen.'))) return;
+          store.set(VAULT, null);
+          loginError = '';
+          render();
+        };
+        return;
+      }
+
       const newKey = `https://github.com/settings/personal-access-tokens/new?name=${encodeURIComponent('Portfolio admin')}&description=${encodeURIComponent('Upload photos to my website')}&target_name=${encodeURIComponent(owner)}&expires_in=366&contents=write`;
       el.innerHTML = `<div class="adm-center adm-login">
         <p class="eyebrow">Admin</p>
-        <h1 class="display">${T('Welcome back', 'Willkommen zurück')}</h1>
-        <p>${T('Paste your GitHub access key to sign in. This device remembers it.', 'Füge deinen GitHub-Zugangsschlüssel ein. Dieses Gerät merkt ihn sich.')}</p>
+        <h1 class="display">${T('Set up this device', 'Gerät einrichten')}</h1>
+        <p>${T('Paste your GitHub access key once and choose an admin password. From then on you sign in with the password every time.', 'Füge einmal deinen GitHub-Zugangsschlüssel ein und wähle ein Admin-Passwort. Danach meldest du dich jedes Mal mit dem Passwort an.')}</p>
         ${msg ? `<p class="adm-error">${msg}</p>` : ''}
-        <form class="adm-key">
-          <input type="password" name="key" placeholder="github_pat_…" autocomplete="off" spellcheck="false" required>
-          <button class="btn btn-primary">${T('Sign in', 'Anmelden')}</button>
+        <form class="adm-setup">
+          ${userField}
+          <label class="field"><span class="eyebrow">${T('GitHub access key', 'GitHub-Zugangsschlüssel')}</span>
+            <input type="password" name="key" placeholder="github_pat_…" autocomplete="off" spellcheck="false" required></label>
+          <label class="field"><span class="eyebrow">${T('New admin password', 'Neues Admin-Passwort')}</span>
+            <input type="password" name="password" autocomplete="new-password" minlength="6" required></label>
+          <label class="field"><span class="eyebrow">${T('Repeat password', 'Passwort wiederholen')}</span>
+            <input type="password" name="password2" autocomplete="new-password" minlength="6" required></label>
+          <button class="btn btn-primary">${T('Save & sign in', 'Speichern & anmelden')}</button>
         </form>
         <details class="adm-help">
           <summary>${T('No key yet? Create one (2 minutes)', 'Noch kein Schlüssel? So erstellst du einen (2 Minuten)')}</summary>
           <ol>
             <li><a href="${newKey}" target="_blank" rel="noopener">${T('Open GitHub → new access key', 'GitHub öffnen → neuer Zugangsschlüssel')} ↗</a></li>
-            <li>${T('Expiration: pick up to 1 year (you just paste a new key when it runs out).', 'Ablauf: bis zu 1 Jahr (danach einfach einen neuen Schlüssel einfügen).')}</li>
+            <li>${T('Expiration: pick up to 1 year (you just set up a new key when it runs out).', 'Ablauf: bis zu 1 Jahr (danach einfach einen neuen Schlüssel einrichten).')}</li>
             <li>${T('Repository access: “Only select repositories” →', 'Repository-Zugriff: „Only select repositories“ →')} <b>${esc(repoName)}</b></li>
             <li>${T('Permissions → Repository permissions → Contents: “Read and write”', 'Permissions → Repository permissions → Contents: „Read and write“')}</li>
             <li>${T('Click “Generate token”, copy it and paste it above.', 'Auf „Generate token“ klicken, kopieren und oben einfügen.')}</li>
           </ol>
         </details></div>`;
-      el.querySelector('.adm-key').onsubmit = (e) => {
+      el.querySelector('.adm-setup').onsubmit = (e) => {
         e.preventDefault();
-        token = e.target.key.value.trim();
-        store.set('gh_token', token);
+        const f = e.target;
+        if (f.password.value.length < 6) { loginError = 'short'; render(); return; }
+        if (f.password.value !== f.password2.value) { loginError = 'mismatch'; render(); return; }
+        token = f.key.value.trim();
+        pendingPassword = f.password.value;
         loginError = '';
         start();
       };
@@ -698,6 +775,7 @@
       const [u, repo] = await Promise.all([gh('/user'), gh(`/repos/${cfg.repo}`)]);
       user = u;
       if (!repo.permissions?.push) { signOut('noaccess'); return; }
+      if (pendingPassword) { await lockToken(token, pendingPassword); pendingPassword = null; }
       const [, idx] = await Promise.all([
         loadTree(),
         fetch(`${BASE}/data/photos.json`, { cache: 'no-store' }).then((r) => r.json()).catch(() => ({})),

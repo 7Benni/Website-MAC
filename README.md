@@ -6,7 +6,9 @@ A minimal photo website that builds itself from a folder. You never edit code to
 
 **Option A: in the browser (from anywhere, even your phone)**
 1. Go to `https://7benni.github.io/Website-MAC/admin/`.
-   The first time on a device, paste your GitHub access key (see setup below). The device remembers it.
+   The first time on a device, paste your GitHub access key (see setup below) and choose an admin password.
+   After that you sign in with that password **every time** you open the admin. The key is stored only
+   encrypted with your password, so without it nobody can use it.
 2. Drag photos (or a whole folder; it becomes an album) onto the page.
 3. Pick an album or type a new name, then click **Upload**.
 4. After about 1–2 minutes the page says **Live!**
@@ -80,7 +82,10 @@ Your site: `https://7benni.github.io/Website-MAC/`
 2. Expiration: up to 1 year.
 3. Repository access: **Only select repositories → Website-MAC**.
 4. Permissions → Repository permissions → **Contents: Read and write**.
-5. **Generate token**, copy it, paste it into the admin page.
+5. **Generate token**, copy it, paste it into the admin page and choose an admin password.
+
+Forgot the password? Click *“Forgot password / use a different key”* on the sign-in page and set the device up again
+with your key (or a new one).
 
 The key only works for this one repository. Treat it like a password. If it leaks, delete it on GitHub
 and create a new one.
